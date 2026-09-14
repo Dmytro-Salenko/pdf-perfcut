@@ -1,12 +1,48 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.env
-.venv
-venv/
+*.pyd
+.Python
 *.egg-info/
 dist/
 build/
-.DS_Store
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# PDF files — keep only committed synthetic fixtures; exclude everything else
+*.pdf
+!tests/fixtures/input_cutcontour.pdf
+!tests/fixtures/no_cutcontour.pdf
+
+# Test outputs and scratch
+output_test.pdf
 tmp/
-*.pdf.out
+*.tmp
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+uvicorn*.log
+
+# Secrets / credentials
+.env
+*.pem
+*.key
+service_account*.json
+credentials*.json
+    pdf-perfcut

@@ -1,78 +1,54 @@
 """
-app/main.py — FastAPI endpoint
+app/main.py — FastAPI application
 
-POST /api/convert
-  Input:  multipart/form-data  field "file" — a PDF
-  Output: application/pdf — modified PDF with PerfCutContour added
-
-Uses a temporary directory per request; cleaned up after response is sent.
+Endpoints:
+  POST /api/convert        — single PDF → processed PDF
+  POST /api/convert-batch  — multiple PDFs → ZIP archive
 """
 
 from __future__ import annotations
+import io
 import os
-import sys
 import tempfile
 import traceback
+import zipfile
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-import pikepdf
+from .core import process_pdf
+from .pdf.parser import ParseError
+from .pdf.verify import VerifyError
 
-from .pdf.parser import extract_cutcontour_paths, ParseError
-from .pdf.writer import append_perfcut_contour
-from .pdf.verify import verify_output, collect_page_boxes, VerifyError
-from .geometry.offset import offset_polygons
-
-OFFSET_MM = 2.5
 app = FastAPI(title="pdf-perfcut")
 
 
+# ---------------------------------------------------------------------------
+# Single-file endpoint
+# ---------------------------------------------------------------------------
+
 @app.post("/api/convert")
 async def convert(file: UploadFile = File(...)):
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Please upload a PDF file.")
+    _require_pdf(file.filename)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        input_path = os.path.join(tmpdir, "input.pdf")
+        input_path  = os.path.join(tmpdir, "input.pdf")
         output_path = os.path.join(tmpdir, "output.pdf")
 
-        # Save upload
-        contents = await file.read()
         with open(input_path, "wb") as f:
-            f.write(contents)
+            f.write(await file.read())
 
-        # Process
         try:
-            pdf = pikepdf.open(input_path)
-            page = pdf.pages[0]
-            original_boxes = collect_page_boxes(page)
-
-            polys = extract_cutcontour_paths(page)
-            offset_polys = offset_polygons(polys, OFFSET_MM)
-
-            if not offset_polys:
-                raise ParseError("Clipper2 returned empty offset result.")
-
-            append_perfcut_contour(pdf, 0, offset_polys)
-            pdf.save(output_path)
-            pdf.close()
-
-            verify_output(output_path, original_boxes)
-
-        except ParseError as e:
+            process_pdf(input_path, output_path)
+        except (ParseError, VerifyError) as e:
             raise HTTPException(status_code=422, detail=str(e))
-        except VerifyError as e:
-            raise HTTPException(status_code=500, detail=f"Output verification failed: {e}")
         except Exception as e:
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=f"Internal error: {e}")
 
-        # Return file — must read before tmpdir is cleaned up
         out_bytes = open(output_path, "rb").read()
 
-    from fastapi.responses import Response
     return Response(
         content=out_bytes,
         media_type="application/pdf",
@@ -80,7 +56,64 @@ async def convert(file: UploadFile = File(...)):
     )
 
 
-# Serve frontend at root
+# ---------------------------------------------------------------------------
+# Batch endpoint
+# ---------------------------------------------------------------------------
+
+@app.post("/api/convert-batch")
+async def convert_batch(files: list[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    errors: list[str] = []
+    zip_buffer = io.BytesIO()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for upload in files:
+                fname = upload.filename or "unknown.pdf"
+                if not fname.lower().endswith(".pdf"):
+                    errors.append(f"{fname} — Not a PDF file.")
+                    continue
+
+                input_path  = os.path.join(tmpdir, f"in_{fname}")
+                output_path = os.path.join(tmpdir, f"out_{fname}")
+
+                with open(input_path, "wb") as f:
+                    f.write(await upload.read())
+
+                try:
+                    process_pdf(input_path, output_path)
+                    zf.write(output_path, arcname=fname)
+                except (ParseError, VerifyError) as e:
+                    errors.append(f"{fname} — {e}")
+                except Exception as e:
+                    errors.append(f"{fname} — Internal error: {e}")
+
+            if errors:
+                zf.writestr("errors.txt", "\n".join(errors) + "\n")
+
+    zip_buffer.seek(0)
+    return Response(
+        content=zip_buffer.read(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="results.zip"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _require_pdf(filename: str | None) -> None:
+    if not filename or not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Please upload a PDF file.")
+
+
+# ---------------------------------------------------------------------------
+# Serve frontend
+# ---------------------------------------------------------------------------
+
 _frontend = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.isdir(_frontend):
     app.mount("/", StaticFiles(directory=_frontend, html=True), name="frontend")

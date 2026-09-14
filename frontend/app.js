@@ -1,8 +1,8 @@
 'use strict';
 
-const dropZone   = document.getElementById('drop-zone');
-const fileInput  = document.getElementById('file-input');
-const statusEl   = document.getElementById('status');
+const dropZone  = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const statusEl  = document.getElementById('status');
 
 // ---- Drag events ----
 dropZone.addEventListener('dragover', e => {
@@ -15,87 +15,104 @@ dropZone.addEventListener('dragover', e => {
 dropZone.addEventListener('drop', e => {
   e.preventDefault();
   dropZone.classList.remove('drag-over');
-  const file = e.dataTransfer.files[0];
-  if (file) processFile(file);
+  const files = [...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.pdf'));
+  if (files.length) processFiles(files);
+  else showError('Please drop PDF files.');
 });
 
-// ---- Click / keyboard ----
 fileInput.addEventListener('change', () => {
-  if (fileInput.files[0]) processFile(fileInput.files[0]);
+  const files = [...fileInput.files].filter(f => f.name.toLowerCase().endsWith('.pdf'));
+  if (files.length) processFiles(files);
 });
+
 dropZone.addEventListener('keydown', e => {
   if (e.key === 'Enter' || e.key === ' ') fileInput.click();
 });
 
 // ---- Core ----
-async function processFile(file) {
-  if (!file.name.toLowerCase().endsWith('.pdf')) {
-    showError('Please select a PDF file.');
-    return;
-  }
-
-  showProcessing(file.name);
+async function processFiles(files) {
   dropZone.classList.add('processing');
 
+  if (files.length === 1) {
+    await processSingle(files[0]);
+  } else {
+    await processBatch(files);
+  }
+
+  dropZone.classList.remove('processing');
+  fileInput.value = '';
+}
+
+async function processSingle(file) {
+  showProcessing(`Processing ${esc(file.name)}…`);
   const form = new FormData();
   form.append('file', file);
 
   try {
     const res = await fetch('/api/convert', { method: 'POST', body: form });
-
-    if (!res.ok) {
-      let detail = `Server error ${res.status}`;
-      try {
-        const body = await res.json();
-        if (body.detail) detail = body.detail;
-      } catch (_) {}
-      throw new Error(detail);
-    }
-
+    if (!res.ok) throw new Error(await extractDetail(res));
     const blob = await res.blob();
-    const url  = URL.createObjectURL(blob);
     const outName = file.name.replace(/\.pdf$/i, '_perfcut.pdf');
-    showSuccess(url, outName);
-
+    showSuccess(URL.createObjectURL(blob), outName, '1 file processed.');
   } catch (err) {
-    showError(err.message || 'Unknown error.');
-  } finally {
-    dropZone.classList.remove('processing');
-    fileInput.value = '';
+    showError(err.message);
   }
 }
 
-function showProcessing(name) {
+async function processBatch(files) {
+  showProcessing(`Processing ${files.length} files…`);
+  const form = new FormData();
+  files.forEach(f => form.append('files', f));
+
+  try {
+    const res = await fetch('/api/convert-batch', { method: 'POST', body: form });
+    if (!res.ok) throw new Error(await extractDetail(res));
+
+    const blob = await res.blob();
+    // Peek at errors.txt count via a second read of the zip isn't possible client-side,
+    // so we just show the download and let the user inspect errors.txt if present.
+    const total = files.length;
+    showSuccess(URL.createObjectURL(blob), 'results.zip',
+      `${total} file${total !== 1 ? 's' : ''} submitted — see results.zip (includes errors.txt if any failed).`);
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+// ---- UI helpers ----
+function showProcessing(msg) {
   statusEl.innerHTML = `
     <div class="status-msg processing">
       <span class="spinner"></span>
-      Processing <strong>${esc(name)}</strong>…
+      ${msg}
     </div>`;
 }
 
-function showSuccess(url, filename) {
+function showSuccess(url, filename, summary) {
   statusEl.innerHTML = `
     <div class="status-msg success">
       <div>
-        <div>✓ Done — PerfCutContour added.</div>
-        <a class="download-btn" href="${url}" download="${esc(filename)}">
-          ↓ Download PDF
-        </a>
+        <div>✓ ${esc(summary)}</div>
+        <a class="download-btn" href="${url}" download="${esc(filename)}">↓ Download ${esc(filename)}</a>
       </div>
     </div>`;
 }
 
 function showError(msg) {
-  statusEl.innerHTML = `
-    <div class="status-msg error">
-      ✗ ${esc(msg)}
-    </div>`;
+  statusEl.innerHTML = `<div class="status-msg error">✗ ${esc(msg)}</div>`;
+}
+
+async function extractDetail(res) {
+  try {
+    const body = await res.json();
+    return body.detail || `Server error ${res.status}`;
+  } catch (_) {
+    return `Server error ${res.status}`;
+  }
 }
 
 function esc(s) {
   return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
