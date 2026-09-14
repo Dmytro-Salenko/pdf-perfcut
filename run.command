@@ -10,6 +10,9 @@ URL="http://localhost:$PORT"
 echo "=== pdf-perfcut ==="
 echo "Starting server on $URL"
 
+# Free the port if something is already listening on it
+lsof -ti tcp:$PORT | xargs kill -9 2>/dev/null || true
+
 # Open browser after a short delay so the server has time to start
 (sleep 1.5 && open "$URL") &
 
