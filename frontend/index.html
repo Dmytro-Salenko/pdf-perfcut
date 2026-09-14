@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF PerfCut</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>PDF PerfCut</h1>
+    <p class="subtitle">Adds a 2.5 mm outward PerfCutContour to any PDF with a CutContour spot color.</p>
+
+    <div id="drop-zone" role="button" tabindex="0" aria-label="Drop PDF here or click to select">
+      <div id="drop-inner">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="12" y1="18" x2="12" y2="12"/>
+          <line x1="9" y1="15" x2="15" y2="15"/>
+        </svg>
+        <p id="drop-label">Drop PDF here<br><span>or click to select</span></p>
+      </div>
+      <input type="file" id="file-input" accept=".pdf" aria-hidden="true">
+    </div>
+
+    <div id="status" aria-live="polite"></div>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
