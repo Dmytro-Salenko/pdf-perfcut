@@ -191,3 +191,62 @@ def test_no_cutcontour_raises_parseerror():
         pdf2.close()
     finally:
         os.unlink(tmp)
+
+
+def test_perfcutcontour_has_stroke_overprint(processed_pdf_path):
+    """PerfCutContour content stream must apply an ExtGState with /OP true."""
+    pdf = pikepdf.open(processed_pdf_path)
+    page = pdf.pages[0]
+    res = page.obj["/Resources"]
+
+    # 1. Find the CS resource name for PerfCutContour
+    cs_dict = res["/ColorSpace"]
+    pcc_cs_key = None
+    for k in cs_dict.keys():
+        e = cs_dict[k]
+        if isinstance(e, pikepdf.Array) and len(e) >= 2:
+            if str(e[0]) == "/Separation" and str(e[1]) == "/PerfCutContour":
+                pcc_cs_key = str(k)
+                break
+    assert pcc_cs_key is not None, "PerfCutContour colorspace not found"
+
+    # 2. Find the ExtGState with /OP true
+    egs_dict = res.get("/ExtGState")
+    assert egs_dict is not None, "No ExtGState in page resources"
+    op_gs_key = None
+    for k in egs_dict.keys():
+        entry = egs_dict[k]
+        if entry.get("/OP") == True:  # noqa: E712
+            op_gs_key = str(k)
+            break
+    assert op_gs_key is not None, "No ExtGState with /OP true found in resources"
+
+    # 3. Verify the content stream applies that gs before stroking PerfCutContour
+    content_ops = list(pikepdf.parse_content_stream(page))
+    current_cs = None
+    current_gs_applied = False
+    gs_before_pcc_stroke = False
+
+    for operands, op in content_ops:
+        opname = str(op)
+        if opname == "gs":
+            applied = str(operands[0])
+            if applied == op_gs_key:
+                current_gs_applied = True
+        elif opname == "CS":
+            current_cs = str(operands[0])
+            if current_cs != pcc_cs_key:
+                current_gs_applied = False  # reset on different CS
+        elif opname in ("S", "s", "B", "b") and current_cs == pcc_cs_key:
+            if current_gs_applied:
+                gs_before_pcc_stroke = True
+        elif opname == "Q":
+            current_gs_applied = False
+            current_cs = None
+
+    pdf.close()
+    assert gs_before_pcc_stroke, (
+        f"PerfCutContour stroke was not preceded by ExtGState {op_gs_key} "
+        f"(with /OP true) in the content stream"
+    )
+

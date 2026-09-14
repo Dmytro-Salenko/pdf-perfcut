@@ -101,6 +101,34 @@ def append_perfcut_contour(
         i += 1
     cs_dict[cs_key] = cs_array
 
+    # ---- 1b. Register ExtGState with stroke overprint ----
+    # Reuse an existing ExtGState if it already has /OP true; otherwise create one.
+    if "/ExtGState" not in res:
+        res["/ExtGState"] = Dictionary()
+    egs_dict = res["/ExtGState"]
+
+    gs_key = None
+    for k in egs_dict.keys():
+        entry = egs_dict[k]
+        if entry.get("/OP") == True:  # noqa: E712
+            gs_key = str(k)
+            break
+
+    if gs_key is None:
+        # Create minimal overprint ExtGState
+        used_gs = {str(k) for k in egs_dict.keys()}
+        gs_key = "/GS_PCC"
+        j = 0
+        while gs_key in used_gs:
+            gs_key = f"/GS_PCC{j}"
+            j += 1
+        egs_dict[gs_key] = Dictionary(
+            Type=Name("/ExtGState"),
+            OP=True,   # stroke overprint on
+            op=True,   # fill overprint on (matches CutContour convention)
+            OPM=1,     # overprint mode 1
+        )
+
     # ---- 2. Build content stream ----
     path_parts = [_polygon_to_pdf_path(poly) for poly in polygons if len(poly) >= 3]
     if not path_parts:
@@ -111,6 +139,7 @@ def append_perfcut_contour(
     stream_lines = [
         "q",                          # save graphics state
         "1 0 0 1 0 0 cm",            # reset CTM to identity (absolute coords)
+        f"{gs_key} gs",               # apply overprint ExtGState
         f"{cs_key} CS",               # set stroke colorspace
         "1 SCN",                      # tint = 1.0 (full ink)
         f"{_fmt(stroke_width_pt)} w", # stroke width
